@@ -1,4 +1,7 @@
+
+import html
 import warnings
+from datetime import datetime
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -44,18 +47,17 @@ html, body, [class*="css"] {
     background: radial-gradient(circle at 15% 0%, #101B33 0%, #070B14 45%, #05080F 100%);
 }
 
-/* Hide default Streamlit chrome */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header[data-testid="stHeader"] {background: transparent;}
 
-/* Sidebar */
 section[data-testid="stSidebar"] {
     background-color: #0A101D;
     border-right: 1px solid var(--border-subtle);
 }
 section[data-testid="stSidebar"] .stSelectbox label,
-section[data-testid="stSidebar"] .stTextInput label {
+section[data-testid="stSidebar"] .stTextInput label,
+section[data-testid="stSidebar"] .stSlider label {
     color: var(--text-muted);
     font-size: 0.8rem;
     font-weight: 600;
@@ -176,6 +178,7 @@ div[data-testid="stTabs"] [data-baseweb="tab-list"] {
     border: 1px solid var(--border-subtle);
     width: fit-content;
     margin-bottom: 1rem;
+    flex-wrap: wrap;
 }
 div[data-testid="stTabs"] button[data-baseweb="tab"] {
     border-radius: 9px;
@@ -196,7 +199,7 @@ div[data-testid="stTabs"] [data-baseweb="tab-border"] {
     display: none;
 }
 
-/* Panel Cards */
+/* Panel & News Cards */
 .stat-panel {
     background: rgba(14, 21, 37, 0.78);
     border: 1px solid var(--border-subtle);
@@ -214,6 +217,68 @@ div[data-testid="stTabs"] [data-baseweb="tab-border"] {
 .stat-k { color: var(--text-muted); }
 .stat-v { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text-primary); }
 
+.news-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+@media (max-width: 900px) {
+    .news-grid { grid-template-columns: 1fr; }
+}
+a.news-card, a.news-card:hover, a.news-card:visited {
+    text-decoration: none !important;
+    color: inherit !important;
+}
+.news-card {
+    background: linear-gradient(180deg, rgba(18, 27, 46, 0.85) 0%, rgba(12, 18, 32, 0.92) 100%);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    padding: 1.15rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.65rem;
+    transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.news-card:hover {
+    border-color: var(--border-glow);
+    transform: translateY(-2px);
+}
+.news-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.74rem;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 0.45rem;
+}
+.news-pub {
+    color: var(--accent-cyan);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.news-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.38;
+    margin: 0 0 0.45rem 0;
+}
+.news-summary {
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    line-height: 1.48;
+    margin: 0;
+}
+.news-link {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    margin-top: 0.25rem;
+}
+
 /* Buttons */
 .stButton > button, .stDownloadButton > button {
     background: linear-gradient(135deg, rgba(0, 210, 255, 0.14), rgba(59, 130, 246, 0.14));
@@ -229,7 +294,6 @@ div[data-testid="stTabs"] [data-baseweb="tab-border"] {
     color: #FFFFFF;
 }
 
-/* Native st.metric polish for secondary tabs */
 [data-testid="stMetric"] {
     background: rgba(14, 21, 37, 0.85);
     border: 1px solid var(--border-subtle);
@@ -282,6 +346,7 @@ compare_ticker = st.sidebar.selectbox(
     "Benchmark / Compare", ["^NSEI", "AAPL", "MSFT", "NVDA", "RELIANCE.NS", "TCS.NS", "INFY.NS"],
     index=0
 )
+forecast_days = st.sidebar.slider("Future forecast (trading days)", min_value=5, max_value=30, value=14, step=1)
 st.sidebar.caption("Tip: Add `.NS` for NSE India stocks (e.g., `RELIANCE.NS`).")
 if st.sidebar.button("↻ Refresh Market Data", use_container_width=True):
     st.cache_data.clear()
@@ -311,6 +376,61 @@ def fetch_data(symbol: str, selected_period: str) -> pd.DataFrame:
     frame.index = pd.to_datetime(frame.index)
     return frame.sort_index()
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_news(symbol: str, limit: int = 10) -> list[dict]:
+    try:
+        raw_news = yf.Ticker(symbol).news or []
+    except Exception:
+        return []
+
+    articles = []
+    for item in raw_news[:limit]:
+        content = item.get("content", item) if isinstance(item, dict) else {}
+        title = content.get("title") or item.get("title")
+        if not title:
+            continue
+
+        provider = content.get("provider")
+        publisher = (
+            provider.get("displayName") if isinstance(provider, dict)
+            else content.get("publisher") or item.get("publisher") or "Yahoo Finance"
+        )
+
+        canonical = content.get("canonicalUrl")
+        click = content.get("clickThroughUrl")
+        link = (
+            (canonical.get("url") if isinstance(canonical, dict) else None)
+            or (click.get("url") if isinstance(click, dict) else None)
+            or content.get("link")
+            or item.get("link")
+            or "#"
+        )
+
+        summary = content.get("summary") or content.get("description") or ""
+        if len(summary) > 180:
+            summary = summary[:177].rsplit(" ", 1)[0] + "..."
+
+        pub_str = ""
+        pub_date = content.get("pubDate") or content.get("displayTime")
+        pub_ts = item.get("providerPublishTime")
+        if pub_date:
+            try:
+                dt = datetime.fromisoformat(str(pub_date).replace("Z", "+00:00"))
+                pub_str = dt.strftime("%d %b %Y · %H:%M")
+            except Exception:
+                pub_str = str(pub_date)[:16]
+        elif pub_ts:
+            pub_str = datetime.fromtimestamp(pub_ts).strftime("%d %b %Y · %H:%M")
+
+        articles.append({
+            "title": title,
+            "publisher": publisher,
+            "link": link,
+            "summary": summary,
+            "published": pub_str
+        })
+    return articles
+
 def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     df = frame.copy()
     close = df["Close"]
@@ -335,6 +455,46 @@ def add_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     df["Drawdown"] = close / close.cummax() - 1
     return df
 
+def build_features(df: pd.DataFrame) -> pd.DataFrame:
+    feat = pd.DataFrame(index=df.index)
+    feat["return_1d"] = df["Close"].pct_change(1)
+    feat["return_5d"] = df["Close"].pct_change(5)
+    feat["sma20_gap"] = df["Close"] / df["SMA_20"] - 1
+    feat["sma50_gap"] = df["Close"] / df["SMA_50"] - 1
+    feat["rsi"] = df["RSI_14"]
+    feat["macd"] = df["MACD"]
+    feat["volume_change"] = df["Volume"].pct_change()
+    feat["volatility_20"] = df["Daily_Return"].rolling(20).std()
+    return feat
+
+def forecast_future_prices(df: pd.DataFrame, model: RandomForestRegressor, feature_cols: list[str], horizon: int) -> pd.DataFrame:
+    sim = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    avg_vol = float(df["Volume"].tail(20).mean())
+    daily_sigma = float(df["Daily_Return"].dropna().std())
+    future_dates = pd.bdate_range(start=df.index[-1] + pd.Timedelta(days=1), periods=horizon)
+
+    rows = []
+    for step, f_date in enumerate(future_dates, start=1):
+        sim_ind = add_indicators(sim)
+        sim_feat = build_features(sim_ind).replace([np.inf, -np.inf], np.nan).ffill().fillna(0)
+        x_last = sim_feat[feature_cols].iloc[[-1]]
+
+        pred_ret = float(model.predict(x_last)[0])
+        pred_ret = float(np.clip(pred_ret, -0.08, 0.08))
+        prev_close = float(sim["Close"].iloc[-1])
+        next_close = prev_close * (1 + pred_ret)
+
+        sim.loc[f_date] = [prev_close, max(prev_close, next_close), min(prev_close, next_close), next_close, avg_vol]
+        band = next_close * daily_sigma * np.sqrt(step)
+        rows.append({
+            "Date": f_date,
+            "Predicted Close": next_close,
+            "Daily Change %": pred_ret * 100,
+            "Upper Band (+1σ)": next_close + band,
+            "Lower Band (-1σ)": max(0.0, next_close - band),
+        })
+    return pd.DataFrame(rows).set_index("Date")
+
 with st.spinner(f"Fetching {ticker} market data..."):
     raw = fetch_data(ticker, period)
 
@@ -356,7 +516,7 @@ st.markdown(f"""
 <div class="hero-header">
     <div>
         <h1 class="hero-title">StockVision</h1>
-        <div class="hero-sub">Market analytics, technical indicators, risk profiling &amp; ML forecasting</div>
+        <div class="hero-sub">Market analytics, live news, technical indicators &amp; multi-day ML forecasting</div>
     </div>
     <div class="ticker-badge">
         <span class="pulse-dot"></span>
@@ -401,8 +561,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-overview_tab, technical_tab, risk_tab, ml_tab, data_tab = st.tabs(
-    ["Overview", "Technical Indicators", "Risk & Comparison", "ML Forecast", "Dataset"]
+overview_tab, technical_tab, risk_tab, ml_tab, news_tab, data_tab = st.tabs(
+    ["Overview", "Technical Indicators", "Risk & Comparison", "ML Forecast", "Market News", "Dataset"]
 )
 
 # ---------- Overview ----------
@@ -520,25 +680,18 @@ with risk_tab:
                 st.plotly_chart(comp_fig, use_container_width=True)
                 st.caption("Correlation measures how daily returns moved together during the selected period; it does not imply causation.")
 
-# ---------- Machine Learning ----------
+# ---------- Machine Learning (Multi-Day Future Forecast) ----------
 with ml_tab:
     st.caption(
-        "Random Forest Regression trained on 8 engineered features (lagged returns, SMA gaps, RSI, MACD, volume change, 20d volatility) "
-        "with a chronological 80/20 train-test split."
+        "Random Forest Regression trained on 8 technical features to predict next-day returns, "
+        "evaluated on a chronological 80/20 split, then rolled forward recursively to project future prices."
     )
 
-    features = pd.DataFrame(index=data.index)
-    features["return_1d"] = data["Close"].pct_change(1)
-    features["return_5d"] = data["Close"].pct_change(5)
-    features["sma20_gap"] = data["Close"] / data["SMA_20"] - 1
-    features["sma50_gap"] = data["Close"] / data["SMA_50"] - 1
-    features["rsi"] = data["RSI_14"]
-    features["macd"] = data["MACD"]
-    features["volume_change"] = data["Volume"].pct_change()
-    features["volatility_20"] = data["Daily_Return"].rolling(20).std()
-
+    features = build_features(data)
     supervised = features.copy()
-    supervised["target"] = data["Close"].shift(-1)
+    supervised["target_return"] = data["Close"].pct_change().shift(-1)
+    supervised["base_close"] = data["Close"]
+    supervised["actual_next_close"] = data["Close"].shift(-1)
     supervised["target_date"] = pd.Series(data.index, index=data.index).shift(-1)
     supervised = supervised.replace([np.inf, -np.inf], np.nan).dropna()
 
@@ -547,48 +700,120 @@ with ml_tab:
     else:
         feature_cols = list(features.columns)
         X = supervised[feature_cols]
-        y = supervised["target"]
+        y_ret = supervised["target_return"]
         split = int(len(supervised) * 0.8)
+
         X_train, X_test = X.iloc[:split], X.iloc[split:]
-        y_train, y_test = y.iloc[:split], y.iloc[split:]
+        y_train, y_test_ret = y_ret.iloc[:split], y_ret.iloc[split:]
 
-        model = RandomForestRegressor(n_estimators=250, max_depth=7, min_samples_leaf=3, random_state=42, n_jobs=-1)
-        model.fit(X_train, y_train)
-        test_predictions = model.predict(X_test)
+        eval_model = RandomForestRegressor(n_estimators=250, max_depth=7, min_samples_leaf=3, random_state=42, n_jobs=-1)
+        eval_model.fit(X_train, y_train)
+        pred_test_ret = eval_model.predict(X_test)
 
-        mae = mean_absolute_error(y_test, test_predictions)
-        rmse = np.sqrt(mean_squared_error(y_test, test_predictions))
-        r2 = r2_score(y_test, test_predictions)
+        actual_test_price = supervised["actual_next_close"].iloc[split:].values
+        pred_test_price = supervised["base_close"].iloc[split:].values * (1 + pred_test_ret)
+
+        mae = mean_absolute_error(actual_test_price, pred_test_price)
+        rmse = np.sqrt(mean_squared_error(actual_test_price, pred_test_price))
+        r2 = r2_score(actual_test_price, pred_test_price)
 
         final_model = RandomForestRegressor(n_estimators=250, max_depth=7, min_samples_leaf=3, random_state=42, n_jobs=-1)
-        final_model.fit(X, y)
-        latest_features = features.replace([np.inf, -np.inf], np.nan).dropna().iloc[[-1]]
-        next_prediction = float(final_model.predict(latest_features[feature_cols])[0])
+        final_model.fit(X, y_ret)
+
+        forecast_df = forecast_future_prices(data, final_model, feature_cols, forecast_days)
+        next_day_price = float(forecast_df["Predicted Close"].iloc[0])
+        horizon_end_price = float(forecast_df["Predicted Close"].iloc[-1])
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Next-Session Estimate", f"{next_prediction:,.2f}", f"{(next_prediction / latest['Close'] - 1) * 100:+.2f}% vs close")
-        m2.metric("Test MAE", f"{mae:,.2f}")
-        m3.metric("Test RMSE", f"{rmse:,.2f}")
+        m1.metric("Next Session Est.", f"{next_day_price:,.2f}", f"{(next_day_price / latest['Close'] - 1) * 100:+.2f}%")
+        m2.metric(f"{forecast_days}-Day Target Est.", f"{horizon_end_price:,.2f}", f"{(horizon_end_price / latest['Close'] - 1) * 100:+.2f}%")
+        m3.metric("Test MAE / RMSE", f"{mae:,.2f}", f"RMSE {rmse:,.2f}", delta_color="off")
         m4.metric("Test R²", f"{r2:.3f}")
 
-        pred_frame = pd.DataFrame(
-            {"Actual": y_test.values, "Predicted": test_predictions},
-            index=pd.to_datetime(supervised["target_date"].iloc[split:].values)
-        )
-        pred_fig = go.Figure()
-        pred_fig.add_trace(go.Scatter(x=pred_frame.index, y=pred_frame["Actual"], name="Actual", line=dict(color="#00D2FF", width=2)))
-        pred_fig.add_trace(go.Scatter(x=pred_frame.index, y=pred_frame["Predicted"], name="Predicted", line=dict(color="#F59E0B", width=2, dash="dash")))
-        style_fig(pred_fig, height=370, title="Held-Out Test Set: Actual vs Predicted Close", yaxis_title="Price")
-        st.plotly_chart(pred_fig, use_container_width=True)
-
-        importance = pd.Series(final_model.feature_importances_, index=feature_cols).sort_values()
-        imp_fig = go.Figure(go.Bar(
-            x=importance.values, y=importance.index, orientation="h",
-            marker=dict(color=importance.values, colorscale="Tealgrn")
+        recent = data["Close"].tail(60)
+        fc_fig = go.Figure()
+        fc_fig.add_trace(go.Scatter(
+            x=recent.index, y=recent.values, name="Historical Close",
+            line=dict(color="#00D2FF", width=2.2)
         ))
-        style_fig(imp_fig, height=310, title="Feature Importance")
-        st.plotly_chart(imp_fig, use_container_width=True)
+        bridge_x = [recent.index[-1]] + list(forecast_df.index)
+        bridge_y = [recent.iloc[-1]] + list(forecast_df["Predicted Close"])
+        fc_fig.add_trace(go.Scatter(
+            x=bridge_x, y=bridge_y, name=f"{forecast_days}d Forecast",
+            line=dict(color="#F59E0B", width=2.4, dash="dash")
+        ))
+        fc_fig.add_trace(go.Scatter(
+            x=list(forecast_df.index) + list(forecast_df.index[::-1]),
+            y=list(forecast_df["Upper Band (+1σ)"]) + list(forecast_df["Lower Band (-1σ)"][::-1]),
+            fill="toself", fillcolor="rgba(245, 158, 11, 0.14)",
+            line=dict(color="rgba(255,255,255,0)"), hoverinfo="skip", name="±1σ Volatility Band"
+        ))
+        style_fig(fc_fig, height=400, title=f"{ticker} {forecast_days}-Trading-Day Future Price Projection", yaxis_title="Price")
+        st.plotly_chart(fc_fig, use_container_width=True)
+
+        c_left, c_right = st.columns([1.35, 1], gap="medium")
+        with c_left:
+            pred_frame = pd.DataFrame(
+                {"Actual": actual_test_price, "Predicted": pred_test_price},
+                index=pd.to_datetime(supervised["target_date"].iloc[split:].values)
+            )
+            pred_fig = go.Figure()
+            pred_fig.add_trace(go.Scatter(x=pred_frame.index, y=pred_frame["Actual"], name="Actual", line=dict(color="#00D2FF", width=1.9)))
+            pred_fig.add_trace(go.Scatter(x=pred_frame.index, y=pred_frame["Predicted"], name="Predicted", line=dict(color="#10B981", width=1.8, dash="dot")))
+            style_fig(pred_fig, height=320, title="Held-Out Test Set: Actual vs Predicted")
+            st.plotly_chart(pred_fig, use_container_width=True)
+
+        with c_right:
+            importance = pd.Series(final_model.feature_importances_, index=feature_cols).sort_values()
+            imp_fig = go.Figure(go.Bar(
+                x=importance.values, y=importance.index, orientation="h",
+                marker=dict(color=importance.values, colorscale="Tealgrn")
+            ))
+            style_fig(imp_fig, height=320, title="Feature Importance")
+            st.plotly_chart(imp_fig, use_container_width=True)
+
+        with st.expander(f"View {forecast_days}-day forecast table", expanded=False):
+            display_fc = forecast_df.copy()
+            display_fc.index = display_fc.index.strftime("%Y-%m-%d")
+            st.dataframe(
+                display_fc.style.format({
+                    "Predicted Close": "{:,.2f}",
+                    "Daily Change %": "{:+.2f}%",
+                    "Upper Band (+1σ)": "{:,.2f}",
+                    "Lower Band (-1σ)": "{:,.2f}",
+                }),
+                use_container_width=True
+            )
+
         st.caption("Educational forecast only — not financial advice. Omits news, fundamentals, and macro events.")
+
+# ---------- Market News ----------
+with news_tab:
+    with st.spinner(f"Loading latest {ticker} headlines..."):
+        news_items = fetch_news(ticker, limit=10)
+
+    if not news_items:
+        st.info(f"No recent Yahoo Finance news articles were returned for {ticker}. Try a major ticker like NVDA, AAPL, or RELIANCE.NS.")
+    else:
+        cards_html = []
+        for art in news_items:
+            t = html.escape(art["title"])
+            p = html.escape(art["publisher"])
+            d = html.escape(art["published"])
+            s = html.escape(art["summary"])
+            u = html.escape(art["link"], quote=True)
+            summary_block = f'<p class="news-summary">{s}</p>' if s else ""
+            cards_html.append(
+                f'<a class="news-card" href="{u}" target="_blank" rel="noopener noreferrer">'
+                f'<div>'
+                f'<div class="news-meta"><span class="news-pub">{p}</span><span>{d}</span></div>'
+                f'<h4 class="news-title">{t}</h4>'
+                f'{summary_block}'
+                f'</div>'
+                f'<span class="news-link">Read full article ↗</span>'
+                f'</a>'
+            )
+        st.markdown(f'<div class="news-grid">{"".join(cards_html)}</div>', unsafe_allow_html=True)
 
 # ---------- Dataset ----------
 with data_tab:
@@ -603,4 +828,4 @@ with data_tab:
     )
 
 st.markdown("---")
-st.caption("StockVision · Educational financial analytics dashboard · Data sourced from Yahoo Finance via yfinance.")
+st.caption("StockVision · Educational financial analytics dashboard · Data & news sourced from Yahoo Finance via yfinance.")
